@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #f6f1e7;
+  color: #15130f;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display), serif;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: #ff4a1f;
+  color: #f6f1e7;
+}
+
+/* Hard-edge cards: the signature look — solid ink border, offset shadow, no blur */
+.card {
+  background: #f6f1e7;
+  border: 1.5px solid #15130f;
+  box-shadow: 6px 6px 0 0 #15130f;
+}
+.card-alt {
+  background: #eee6d6;
+  border: 1.5px solid #15130f;
+}
+
+.card-hover {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.card-hover:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: 9px 9px 0 0 #15130f;
+}
+.card-hover:active {
+  transform: translate(0, 0);
+  box-shadow: 3px 3px 0 0 #15130f;
+}
+
+/* Buttons */
+.btn-signal {
+  background: #ff4a1f;
+  color: #f6f1e7;
+  border: 1.5px solid #15130f;
+  box-shadow: 4px 4px 0 0 #15130f;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-signal:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 #15130f;
+}
+.btn-signal:active {
+  transform: translate(0, 0);
+  box-shadow: 2px 2px 0 0 #15130f;
+}
+
+.btn-outline {
+  background: transparent;
+  color: #15130f;
+  border: 1.5px solid #15130f;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.btn-outline:hover {
+  background: #15130f;
+  color: #f6f1e7;
+}
+
+/* Stamp / sticker badge — rotated, hand-placed feel */
+.stamp {
+  transform: rotate(-4deg);
+}
+
+/* Marquee strip */
+.marquee-track {
+  animation: marquee 24s linear infinite;
+}
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+
+/* Status badges — solid outline chips, no glow/ring */
+.status-badge {
+  @apply inline-flex items-center gap-1.5 rounded-full border-[1.5px] border-ink px-3 py-1 text-xs font-semibold uppercase tracking-wide;
+}
+.status-ISSUED, .status-CONFIRMED, .status-PUBLISHED { @apply bg-cobalt text-paper; }
+.status-CHECKED_IN, .status-APPROVED, .status-SUCCESS { @apply bg-moss text-paper; }
+.status-WAITLISTED, .status-PENDING, .status-PENDING_APPROVAL { @apply bg-acid text-ink; }
+.status-CANCELLED, .status-BLACKLISTED, .status-REJECTED, .status-INVALID, .status-DUPLICATE { @apply bg-berry text-paper; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(21,19,15,0.25); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(21,19,15,0.4); }
+
+input, textarea, select {
+  color: #15130f;
+}
+input::placeholder, textarea::placeholder {
+  color: rgba(21,19,15,0.35);
+}

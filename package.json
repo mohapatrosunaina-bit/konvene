@@ -1,0 +1,17 @@
+{
+  "name": "konvene",
+  "private": true,
+  "author": "Sunaina Mohapatra (ENG24CT0058)",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build:api && npm run build:web",
+    "build:api": "npm run build -w apps/api",
+    "build:web": "npm run build -w apps/web",
+    "prisma:generate": "npm run prisma:generate -w apps/api",
+    "typecheck:api": "tsc --noEmit -p apps/api/tsconfig.json",
+    "typecheck:web": "tsc --noEmit -p apps/web/tsconfig.json",
+    "typecheck": "npm run typecheck:api && npm run typecheck:web"
+  }
+}

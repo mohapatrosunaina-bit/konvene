@@ -1,0 +1,327 @@
+// Konvene — core data model
+// Runs on Postgres (Supabase in prod). Status/role fields are plain String
+// rather than native Prisma enums — this schema started on SQLite (which
+// doesn't support enums) and the String fields were kept for a clean 1:1
+// diff; valid values are documented per field and enforced by zod schemas in
+// the route layer. Promoting to native Postgres enums is a safe follow-up,
+// not required for correctness.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Academic structure ----------
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  branches  Branch[]
+  clubs     Club[]
+  createdAt DateTime @default(now())
+}
+
+model Branch {
+  id           String     @id @default(cuid())
+  name         String
+  code         String
+  department   Department @relation(fields: [departmentId], references: [id])
+  departmentId String
+  sections     Section[]
+  subjects     Subject[]
+}
+
+model Section {
+  id          String                     @id @default(cuid())
+  name        String                     // e.g. "A"
+  year        Int
+  semester    Int
+  branch      Branch                     @relation(fields: [branchId], references: [id])
+  branchId    String
+  students    StudentProfile[]
+  assignments SubjectFacultyAssignment[]
+}
+
+model Subject {
+  id          String                     @id @default(cuid())
+  name        String
+  code        String
+  semester    Int
+  branch      Branch                     @relation(fields: [branchId], references: [id])
+  branchId    String
+  assignments SubjectFacultyAssignment[]
+  events      Event[]
+  attendance  Attendance[]
+}
+
+// Links a subject taught in a given section to the faculty responsible — the
+// key row that makes attendance crediting resolve to the *real* subject faculty.
+model SubjectFacultyAssignment {
+  id            String  @id @default(cuid())
+  subject       Subject @relation(fields: [subjectId], references: [id])
+  subjectId     String
+  section       Section @relation(fields: [sectionId], references: [id])
+  sectionId     String
+  faculty       User    @relation(fields: [facultyUserId], references: [id])
+  facultyUserId String
+
+  @@unique([subjectId, sectionId])
+}
+
+// ---------- Identity & roles ----------
+// Role: SUPER_ADMIN | ADMIN | HOD | FACULTY | FACULTY_COORDINATOR | CLUB_HEAD
+//     | CORE_TEAM | VOLUNTEER | STUDENT | GUEST | SPONSOR | JUDGE | SPEAKER
+// ScopeType: GLOBAL | DEPARTMENT | CLUB | SUBJECT
+
+// User.id matches the corresponding Supabase Auth user's id 1:1 — Supabase
+// owns the credential (password hash, sessions, token issuance); this table
+// only holds app-specific profile/role data keyed to that same identity.
+model User {
+  id        String   @id
+  name      String
+  email     String   @unique
+  phone     String?
+  avatarUrl String?
+  usn       String?
+  createdAt DateTime @default(now())
+
+  studentProfile      StudentProfile?
+  roleAssignments     UserRoleAssignment[]
+  facultyAssignments  SubjectFacultyAssignment[]
+  clubMemberships     ClubMember[]
+  registrations       Registration[]
+  scannedCheckIns     CheckIn[]           @relation("ScannedBy")
+  pendingAttendances  PendingAttendance[] @relation("FacultyReview")
+  attendances         Attendance[]        @relation("AttendeeOf")
+  attendanceApprovals Attendance[]        @relation("CreditedBy")
+  certificates        Certificate[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+}
+
+model StudentProfile {
+  userId    String  @id
+  user      User    @relation(fields: [userId], references: [id])
+  section   Section @relation(fields: [sectionId], references: [id])
+  sectionId String
+  year      Int
+  semester  Int
+}
+
+model UserRoleAssignment {
+  id        String  @id @default(cuid())
+  user      User    @relation(fields: [userId], references: [id])
+  userId    String
+  role      String
+  scopeType String
+  scopeId   String? // clubId / departmentId / subjectId depending on scopeType; null for GLOBAL
+
+  @@unique([userId, role, scopeType, scopeId])
+}
+
+// ---------- Clubs ----------
+
+model Club {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  logoUrl            String?
+  description        String?
+  department         Department @relation(fields: [departmentId], references: [id])
+  departmentId       String
+  facultyAdvisorName String?
+  createdAt          DateTime @default(now())
+
+  members ClubMember[]
+  events  Event[]
+}
+
+// ClubRole: CLUB_HEAD | CORE_TEAM | VOLUNTEER
+model ClubMember {
+  id     String @id @default(cuid())
+  club   Club   @relation(fields: [clubId], references: [id])
+  clubId String
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+  role   String
+
+  @@unique([clubId, userId])
+}
+
+// ---------- Events ----------
+// EventStatus: DRAFT | PENDING_APPROVAL | PUBLISHED | ONGOING | COMPLETED | ARCHIVED | REJECTED | CANCELLED
+// EventCategory: WORKSHOP | HACKATHON | CONFERENCE | TALK | SEMINAR | SPORTS | CULTURAL
+//              | TECHNICAL | MUSIC | DANCE | FEST | BOOTCAMP | PLACEMENT | COMPETITION
+
+model Event {
+  id                        String   @id @default(cuid())
+  club                      Club     @relation(fields: [clubId], references: [id])
+  clubId                    String
+  title                     String
+  slug                      String   @unique
+  bannerUrl                 String?
+  description               String
+  category                  String
+  venue                     String
+  startAt                   DateTime
+  endAt                     DateTime
+  capacity                  Int
+  status                    String   @default("DRAFT")
+  requiresFacultyAttendance Boolean  @default(false)
+  linkedSubject             Subject? @relation(fields: [linkedSubjectId], references: [id])
+  linkedSubjectId           String?
+  createdAt                 DateTime @default(now())
+
+  form          EventForm?
+  ticketTypes   TicketType[]
+  registrations Registration[]
+  attendance    Attendance[]
+  certificates  Certificate[]
+}
+
+model EventForm {
+  event      Event  @relation(fields: [eventId], references: [id])
+  eventId    String @id
+  schemaJson String // JSON-encoded array of field definitions
+}
+
+// TicketType is a free allocation pool (Free / VIP / Volunteer / Speaker / Guest /
+// Judge / Sponsor / Media / Workshop) — Konvene does not process payments, so
+// every ticket type is free; the name only distinguishes access tier/capacity.
+model TicketType {
+  id            String         @id @default(cuid())
+  event         Event          @relation(fields: [eventId], references: [id])
+  eventId       String
+  name          String
+  capacity      Int
+  registrations Registration[]
+}
+
+// ---------- Registration & Ticketing ----------
+// RegistrationStatus: CONFIRMED | WAITLISTED | CANCELLED
+// TicketStatus: ISSUED | CHECKED_IN | CANCELLED | BLACKLISTED
+
+model Registration {
+  id               String     @id @default(cuid())
+  event            Event      @relation(fields: [eventId], references: [id])
+  eventId          String
+  user             User       @relation(fields: [userId], references: [id])
+  userId           String
+  ticketType       TicketType @relation(fields: [ticketTypeId], references: [id])
+  ticketTypeId     String
+  formResponseJson String
+  status           String     @default("CONFIRMED")
+  createdAt        DateTime   @default(now())
+
+  ticket Ticket?
+
+  @@unique([eventId, userId])
+}
+
+model Ticket {
+  id             String   @id @default(cuid())
+  registration   Registration @relation(fields: [registrationId], references: [id])
+  registrationId String   @unique
+  qrToken        String   @unique // "<ticketId>.<base64url signature>"
+  status         String   @default("ISSUED")
+  issuedAt       DateTime @default(now())
+
+  checkIn CheckIn?
+}
+
+model CheckIn {
+  id              String   @id @default(cuid())
+  ticket          Ticket   @relation(fields: [ticketId], references: [id])
+  ticketId        String   @unique
+  scannedBy       User     @relation("ScannedBy", fields: [scannedByUserId], references: [id])
+  scannedByUserId String
+  method          String   // QR | MANUAL
+  scannedAt       DateTime @default(now())
+
+  attendanceCandidate AttendanceCandidate?
+}
+
+// ---------- Attendance pipeline ----------
+
+model AttendanceCandidate {
+  id        String   @id @default(cuid())
+  checkIn   CheckIn  @relation(fields: [checkInId], references: [id])
+  checkInId String   @unique
+  createdAt DateTime @default(now())
+
+  pendingAttendance PendingAttendance?
+}
+
+// PendingAttendanceStatus: PENDING | APPROVED | REJECTED
+model PendingAttendance {
+  id                    String    @id @default(cuid())
+  attendanceCandidate   AttendanceCandidate @relation(fields: [attendanceCandidateId], references: [id])
+  attendanceCandidateId String    @unique
+  faculty               User      @relation("FacultyReview", fields: [facultyUserId], references: [id])
+  facultyUserId         String
+  status                String    @default("PENDING")
+  rejectionReason       String?
+  createdAt             DateTime  @default(now())
+  decidedAt             DateTime?
+}
+
+model Attendance {
+  id               String   @id @default(cuid())
+  user             User     @relation("AttendeeOf", fields: [userId], references: [id])
+  userId           String
+  event            Event    @relation(fields: [eventId], references: [id])
+  eventId          String
+  subject          Subject? @relation(fields: [subjectId], references: [id])
+  subjectId        String?
+  creditedBy       User?    @relation("CreditedBy", fields: [creditedByUserId], references: [id])
+  creditedByUserId String?
+  creditedAt       DateTime @default(now())
+
+  certificate Certificate?
+
+  @@unique([userId, eventId])
+}
+
+// ---------- Certificates ----------
+
+model Certificate {
+  id           String      @id @default(cuid())
+  certId       String      @unique // public-facing verification code
+  user         User        @relation(fields: [userId], references: [id])
+  userId       String
+  event        Event       @relation(fields: [eventId], references: [id])
+  eventId      String
+  attendance   Attendance? @relation(fields: [attendanceId], references: [id])
+  attendanceId String?     @unique
+  pdfUrl       String
+  issuedAt     DateTime    @default(now())
+}
+
+// ---------- Comms & audit ----------
+
+model Notification {
+  id          String    @id @default(cuid())
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  type        String
+  payloadJson String
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  actorUserId String?
+  action      String
+  targetType  String
+  targetId    String
+  beforeJson  String?
+  afterJson   String?
+  createdAt   DateTime @default(now())
+}

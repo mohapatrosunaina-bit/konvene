@@ -1,0 +1,110 @@
+name: CD - Deployment Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+      run_migrations:
+        description: "Run database migrations prior to release"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  database-migrations:
+    name: Database Migrations
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.run_migrations == true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/konvene?schema=public' }}
+        run: npm ci
+
+      - name: Run Prisma Migrations
+        if: env.DATABASE_URL_SECRET != ''
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Applying pending database migrations to production/staging database..."
+          npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+
+      - name: Skip Migrations (Notice)
+        if: env.DATABASE_URL_SECRET == ''
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Notice: DATABASE_URL repository secret is not yet configured in GitHub."
+          echo "Prisma migrations skipped. To enable automated migrations, add DATABASE_URL under Repo Settings > Secrets and variables > Actions."
+
+  deploy:
+    name: Deploy to Production
+    needs: [database-migrations]
+    runs-on: ubuntu-latest
+    if: always() && (needs.database-migrations.result == 'success' || needs.database-migrations.result == 'skipped')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/konvene?schema=public' }}
+        run: npm ci
+
+      - name: Build All Workspaces
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://dummy.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'dummy-anon-key' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/konvene?schema=public' }}
+        run: |
+          npm run prisma:generate
+          npm run build
+
+      - name: Vercel Production Deployment
+        if: env.VERCEL_TOKEN != ''
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          echo "Deploying production release via Vercel CLI..."
+          npx vercel --prod --token ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deployment Instructions (Notice)
+        if: env.VERCEL_TOKEN == ''
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          echo "Notice: VERCEL_TOKEN repository secret is not yet configured."
+          echo "Build artifact verified successfully. To enable direct CLI deployment to Vercel, configure VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID in GitHub Repository Secrets."
