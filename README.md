@@ -7,24 +7,25 @@
 
 Made by **Sunaina Mohapatra** (ENG24CT0058)
 
-Konvene is the operating system for campus communities — clubs, departments, and student chapters run every event (hackathons, workshops, fests, conferences) through one connected platform instead of WhatsApp + Google Forms + Excel + a QR generator + Gmail + a paper attendance sheet.
+Konvene is the operating system for campus communities — clubs, departments, and student chapters run every event (hackathons, workshops, fests, conferences) through one connected platform instead of juggling WhatsApp groups, Google Forms, spreadsheets, and manual check-in sheets. Students discover what's happening, register, get a signed QR ticket, check in at the door, and receive faculty-verified attendance and a certificate — all in one place.
 
-**Konvene does not process payments.** Every ticket type is free (Free/VIP/Volunteer/Speaker/etc. are access tiers with their own capacity, not price points). There is no payment gateway, checkout, or coupon system in this project.
+**Konvene does not process payments.** Every ticket type is free (Free/VIP/Volunteer/Speaker/etc. are access tiers with their own capacity, not price points). There is no payment gateway, checkout, coupon, or revenue collection in this project — not now, not on the roadmap.
 
 Full product spec: [`CampusHub_PRD.md`](./CampusHub_PRD.md) (the PRD predates the "Konvene" name — treat every "CampusHub" reference in it as this project).  
-CI/CD Architecture: [`docs/CICD_PIPELINE.md`](./docs/CICD_PIPELINE.md).
+CI/CD Architecture: [`docs/CICD_PIPELINE.md`](./docs/CICD_PIPELINE.md).  
+Sprint planning: [`docs/SPRINT_PLAN.md`](./docs/SPRINT_PLAN.md).
 
 ## What's real in this repo right now (Phase 0 MVP)
 
 Nothing here is mocked. Specifically:
 
 - **Signed QR tickets** — each ticket's QR encodes an HMAC-SHA256-signed token (`apps/api/src/lib/qr.ts`). Forged tokens are rejected before the DB is even queried.
-- **Atomic check-in** — the check-in state transition (`apps/api/src/routes/checkin.ts`) uses a conditional `UPDATE ... WHERE status = 'ISSUED'`, so two volunteers scanning the same ticket at the same instant cannot both succeed. Verified under a real concurrent-duplicate test (see below).
-- **Faculty-verified attendance tied to real academic structure** — `SubjectFacultyAssignment` links a subject + section to the actual faculty teaching it. When a student checks in to an event tagged with a subject, the system resolves *that specific faculty member* (not a generic organizer) and routes the attendance credit to them for approval (`apps/api/src/routes/faculty.ts`).
+- **Atomic check-in** — the check-in state transition (`apps/api/src/routes/checkin.ts`) uses a conditional `UPDATE ... WHERE status = 'ISSUED'`, so two volunteers scanning the same ticket at the same time cannot both succeed.
+- **Faculty-verified attendance tied to real academic structure** — `SubjectFacultyAssignment` links a subject + section to the actual faculty teaching it. When a student checks in to an event tied to CS301, only the faculty who teaches CS301 to that student's section can approve it.
 - **Real PDF certificates** — generated server-side with PDFKit, each with a unique certificate ID and an embedded QR that resolves to a public, no-login verification page.
 - **Working registration → waitlist → auto-promotion** flow.
-- **Event approval workflow** — club heads submit `DRAFT` events for approval; only the club's Faculty Coordinator (or an Admin) can move an event to `PUBLISHED`, with a `REJECTED` state that routes back to the club head for revision (`apps/api/src/routes/events.ts`).
-- **Manual check-in fallback** — search by name/USN and check in an attendee whose QR is lost or unreadable, routed through the exact same atomic state transition as a QR scan (`apps/api/src/routes/checkin.ts` → `/checkin/search`, `/checkin/manual`).
+- **Event approval workflow** — club heads submit `DRAFT` events for approval; only the club's Faculty Coordinator (or an Admin) can move an event to `PUBLISHED`, with a `REJECTED` state that routes back to draft for revision.
+- **Manual check-in fallback** — search by name/USN and check in an attendee whose QR is lost or unreadable, routed through the exact same atomic state transition as a QR scan (`apps/api/src/routes/checkin.ts`).
 
 This is genuinely runnable end-to-end locally — see Quickstart.
 
@@ -73,7 +74,7 @@ Two seeded events let you walk both loops immediately:
   1. Log in as a student → open the event → register → get a QR ticket.
   2. Log in as the club head → `/club/gdsc/dashboard` → start the scanner (or use the manual check-in search) → check the student in.
   3. Log in as faculty (`/faculty`) → the checked-in student appears in *Pending Attendance* → approve.
-  4. As club head, call `POST /events/:id/issue-certificates` (a dashboard button for this is Phase 1) → the student's certificate appears under **My Tickets → Certificates**, and its QR resolves to a public `/verify/:certId` page.
+  4. As club head, call `POST /events/:id/issue-certificates` (a dashboard button for this is Phase 1) → the student's certificate appears under **My Tickets → Certificates**, and its QR resolves to the public verification page.
 - **Intro to Kotlin Workshop** — seeded in `PENDING_APPROVAL`.
   1. Log in as `faculty@konvene.dev` → `/faculty` → the *Events Awaiting Your Approval* section shows it → Approve (or Reject with a reason).
   2. Approving flips it to `PUBLISHED` and it appears on the public discovery page immediately.
@@ -82,9 +83,9 @@ Two seeded events let you walk both loops immediately:
 
 See PRD §16 for the full phased plan. Snapshot:
 
-- **Phase 0 (done)** — auth, clubs, events, dynamic registration forms, free ticketing, waitlist, signed QR check-in, manual check-in fallback, faculty-verified attendance, event approval workflow, PDF certificates, club-head and faculty dashboards.
+- **Phase 0 (done)** — auth, clubs, events, dynamic registration forms, free ticketing, waitlist, signed QR check-in, manual check-in fallback, faculty-verified attendance, event approval workflow, certificate generation and verification.
 - **Phase 1** — email notifications (Resend), admin dashboard, .ics calendar export.
-- **Phase 2** — community/Q&A threads, rule-based duplicate/fraud check-in detection, AI feedback summarization, audit log UI (the `AuditLog` table already records event approvals/rejections — a viewer UI is what's missing).
+- **Phase 2** — community/Q&A threads, rule-based duplicate/fraud check-in detection, AI feedback summarization, audit log UI (the `AuditLog` table already records event approvals/rejections — UI still needed), club-branded certificates.
 - **Phase 3** — full AI suite (poster/email/schedule generation, AI event assistant), real-time chat, ERP sync, wallet passes, native mobile, multi-university tenancy.
 
 Payments and coupons are explicitly **not** part of this project's scope — see the note above.
@@ -92,5 +93,5 @@ Payments and coupons are explicitly **not** part of this project's scope — see
 ## Security notes
 
 - QR signing secret and JWT secret are separate (`.env` — never commit real values; `.env.example` has placeholders).
-- Every Prisma query that returns a `User` uses an explicit `select` (never a bare `include: { user: true }`), so `passwordHash` is never serialized into an API response — this was audited and fixed across every route (clubs, events, faculty, checkin, certificates).
+- Every Prisma query that returns a `User` uses an explicit `select` (never a bare `include: { user: true }`), so `passwordHash` is never serialized into an API response — this was audited and fixed.
 - File uploads (Phase 1+) must be validated by content, not just extension.
